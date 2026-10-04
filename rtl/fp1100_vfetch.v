@@ -20,6 +20,12 @@
 //   los planos B y R: q = {R(addr+1), B(addr+1), R(addr), B(addr)}. Aqui se
 //   elige el plano (B para las rasters 0-7, R para las 8-15) y el buffer
 //   guarda {-, impar, par}. Una sola peticion por caracter, como siempre.
+//
+// Para la salida de 31 kHz propia (fp1100_vga, macro VGA_525 del top) cada
+// linea se escribe ademas en un anillo de 8 lineas, {lin_n[2:0], caracter},
+// que se lee con el reloj de VGA: aquel saca 525 lineas por cada 261 de la
+// maquina y va adelantandose poco a poco, asi que no le basta con la linea
+// anterior. Si no se usa, Quartus lo quita.
 //============================================================================
 `default_nettype none
 
@@ -30,6 +36,7 @@ module fp1100_vfetch (
     // del CRTC (fp1100_video, mismo reloj)
     input  wire        linea_tgl,
     input  wire [13:0] lin_ma,
+    input  wire [8:0]  lin_n,
     input  wire [4:0]  lin_ra,
     input  wire        lin_visible,
     input  wire        lin_display_on,
@@ -47,7 +54,12 @@ module fp1100_vfetch (
     // lado del video
     input  wire        clk_pix,
     input  wire [7:0]  lb_addr,         // {banco, caracter}
-    output reg  [23:0] lb_q
+    output reg  [23:0] lb_q,
+
+    // lado de fp1100_vga
+    input  wire        clk_vga,
+    input  wire [9:0]  lb31_addr,       // {linea[2:0], caracter}
+    output reg  [23:0] lb31_q
 );
     reg        tgl_d;
     reg        banco;
@@ -58,11 +70,14 @@ module fp1100_vfetch (
     reg        activo, esperando;
     reg        rq_banco;
     reg [6:0]  rq_i;
+    reg [2:0]  linea, rq_linea;
 
     reg [23:0] lb [0:255];
     reg        lb_we;
     reg [7:0]  lb_wa;
     reg [23:0] lb_wd;
+    reg [23:0] lb31 [0:1023];
+    reg [9:0]  lb31_wa;
 
     wire       nueva = (linea_tgl != tgl_d);
     wire [13:0] ma_i = ma + {7'd0, i};
@@ -78,6 +93,7 @@ module fp1100_vfetch (
         end else begin
             if (nueva) begin
                 banco  <= linea_tgl;
+                linea  <= lin_n[2:0];
                 ma     <= lin_ma;
                 ra     <= lin_ra[3:0];
                 modo_par <= vga400 & lin_screen1;
@@ -91,6 +107,7 @@ module fp1100_vfetch (
             if (esperando && ack) begin
                 lb_we     <= 1'b1;
                 lb_wa     <= {rq_banco, rq_i};
+                lb31_wa   <= {rq_linea, rq_i};
                 lb_wd     <= !modo_par ? q[23:0] :
                              ra[3] ? {8'h00, q[31:24], q[15:8]} : {8'h00, q[23:16], q[7:0]};
                 esperando <= 1'b0;
@@ -99,6 +116,7 @@ module fp1100_vfetch (
                 addr      <= {ma_i[10:0], ra[2:1], ra[0] & ~modo_par};
                 par       <= modo_par;
                 rq_banco  <= banco;
+                rq_linea  <= linea;
                 rq_i      <= i;
                 esperando <= 1'b1;
                 i         <= i + 7'd1;
@@ -110,6 +128,10 @@ module fp1100_vfetch (
     // Buffer: escribe clk (sistema), lee clk_pix. Una M9K.
     always @(posedge clk) if (lb_we) lb[lb_wa] <= lb_wd;
     always @(posedge clk_pix) lb_q <= lb[lb_addr];
+
+    // Anillo de 8 lineas para fp1100_vga: escribe clk, lee clk_vga
+    always @(posedge clk) if (lb_we) lb31[lb31_wa] <= lb_wd;
+    always @(posedge clk_vga) lb31_q <= lb31[lb31_addr];
 
 endmodule
 

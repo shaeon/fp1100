@@ -34,8 +34,18 @@
 // incluida: la imagen sale igual, una linea mas tarde.
 //
 // Centrado (como en el NewBrain): h_off mueve la imagen dentro de la linea
-// (el sincronismo queda fijo); v_off retrasa la vsync respecto a las lineas,
-// de 2 a 16 lineas (8 por defecto).
+// (el sincronismo queda fijo); v_off mueve la vsync respecto a las lineas.
+//
+// Sincronismos segun la salida (tv15):
+//   15 kHz  hsync de 59 puntos (4,7 us, el de la television) y la vsync del
+//           CRTC (16 lineas) retrasada 0..16 lineas (8 por defecto).
+//   31 kHz  (scandoubler o modo31) los de VGA 640x480: hsync de 96 puntos y
+//           vsync de UNA linea de la maquina (2 de salida), colocada para que
+//           las 400 lineas queden en medio de las 480 de VGA: 2 de vsync + 33
+//           de porche + 40 de borde = la imagen 75 lineas despues del
+//           principio de la vsync. Con la vsync de 16 lineas del CRTC (32 de
+//           salida) los monitores y el OSSC, que cuentan el porche desde el
+//           final de la vsync, se comian las lineas de arriba.
 //
 // El bit 0 de cada byte de VRAM es el pixel de la izquierda. Los planos son
 // B, R y G, con sus habilitaciones en PA2, PA1 y PA0; con PA4 (pantalla
@@ -58,6 +68,7 @@ module fp1100_display (
     output reg         modo31,          // sacando 31 kHz propios: sin scandoubler
     input  wire signed [5:0] h_off,     // puntos, + = a la derecha (-32..+12)
     input  wire signed [4:0] v_off,     // lineas, + = hacia abajo
+    input  wire        tv15,            // salida a 15 kHz (sin scandoubler)
 
     // del CRTC (clk_sys)
     input  wire        linea_tgl,
@@ -92,8 +103,9 @@ module fp1100_display (
     localparam H_TOTAL  = 800;
     localparam H_IMG_STD = 48;          // porche trasero de VGA
     localparam H_SYNC0  = 704;          // 640 + 48 + 16 de porche delantero
-    localparam H_SYNC1  = 800;
-    localparam H_CS0    = 608;          // hsync_cs en las lineas de vsync
+    localparam H_SYNC1  = 800;          // 31 kHz: 96 puntos, VGA
+    localparam H_SYNC1_TV = 763;        // 15 kHz: 59 puntos, 4,72 us
+    localparam H_CS0    = 645;          // hsync_cs en las lineas de vsync (15 kHz)
     localparam H_CS1    = 704;
 
     // Comienzo de la imagen con el ajuste del menu (32..60 con el rango de
@@ -203,8 +215,34 @@ module fp1100_display (
     //------------------------------------------------------------------
     reg  [16:0] vs_hist;
     always @(posedge clk_pix) if (nueva_linea) vs_hist <= {vs_hist[15:0], p_vs};
-    wire [4:0] vs_idx = 5'd8 - v_off;       // v_off -8..+8 -> 16..0 (+4 de mas a 31 kHz, ver top)
+    wire [4:0] vs_idx = 5'd8 - v_off;       // v_off -8..+8 -> 16..0
     wire vs_ret = vs_hist[vs_idx];
+
+    //------------------------------------------------------------------
+    // 31 kHz: vsync de VGA, una linea de la maquina. Se cuentan las lineas
+    // desde el principio de la vsync del CRTC (vs_hist[0], la referencia de
+    // vs_idx = 0) y se mide el periodo de la trama, para poder ponerla
+    // ANTES que la del CRTC: hace falta, porque la del CRTC empieza 35
+    // lineas antes de la imagen y para centrar las 400 lineas en VGA tiene
+    // que empezar 37,5 antes. vs_pos = lineas desde esa referencia (negativo:
+    // antes); -2 por defecto, y v_off la adelanta (+ = imagen mas abajo).
+    //------------------------------------------------------------------
+    reg  [8:0] vlin, vperiodo;
+    wire       vs_ini = p_vs & ~vs_hist[0];     // vs_hist[0] pasa a 1 en esta linea
+    always @(posedge clk_pix) begin
+        if (reset) begin
+            vlin <= 9'd0; vperiodo <= 9'd0;
+        end else if (nueva_linea) begin
+            if (vs_ini) begin
+                vperiodo <= vlin + 9'd1;
+                vlin     <= 9'd0;
+            end else if (vlin != 9'h1FF) vlin <= vlin + 9'd1;
+        end
+    end
+    wire signed [5:0] vs_pos = -6'sd2 - {v_off[4], v_off};
+    wire [8:0] vs_lin31 = vs_pos[5] ? (vperiodo + {{3{vs_pos[5]}}, vs_pos}) : {3'd0, vs_pos};
+    wire vs_31 = (vlin == vs_lin31);
+    wire vs_sel = tv15 ? vs_ret : vs_31;
 
     //------------------------------------------------------------------
     // Direccion del buffer de linea: se pone en el ultimo punto de cada
@@ -290,7 +328,7 @@ module fp1100_display (
     reg en_img_d;
     always @(posedge clk_pix) begin
         if (ce_pix) begin
-            if (hcnt == H_SYNC0) vs_linea <= vs_ret;
+            if (hcnt == H_SYNC0) vs_linea <= vs_sel;
             R <= {8{col[1]}};
             G <= {8{col[2]}};
             B <= {8{col[0]}};
@@ -301,9 +339,9 @@ module fp1100_display (
             en_img_d <= en_img;
             hblank   <= ~en_img_d;
             vblank   <= ~visible;
-            hsync    <= (hcnt >= H_SYNC0) && (hcnt < H_SYNC1);
+            hsync    <= (hcnt >= H_SYNC0) && (hcnt < (tv15 ? H_SYNC1_TV : H_SYNC1));
             hsync_cs <= vs_linea ? ((hcnt >= H_CS0) && (hcnt < H_CS1))
-                                 : ((hcnt >= H_SYNC0) && (hcnt < H_SYNC1));
+                                 : ((hcnt >= H_SYNC0) && (hcnt < (tv15 ? H_SYNC1_TV : H_SYNC1)));
             vsync    <= vs_linea;
         end
     end

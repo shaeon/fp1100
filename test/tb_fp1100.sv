@@ -18,6 +18,19 @@ module tb_fp1100;
 
     reg reset = 1, mem_reset = 1;
 
+    // +VGAHEX: la salida pasa por mist_video (scandoubler, como en el top)
+    // y se vuelca a vga.hex para analiza_sd.py; +VGADESDE=ms (def. 0): no
+    // empieza hasta entonces; +VGATRAMAS=n (def. 3); +SD_OFF: 15 kHz
+    bit tb_sd_off = 0, vgahex = 0;
+    integer vga_desde_ms = 0, vga_tramas = 3;
+    initial begin
+        tb_sd_off = $test$plusargs("SD_OFF");
+        vgahex = $test$plusargs("VGAHEX");
+        if (!$value$plusargs("VGADESDE=%d", vga_desde_ms)) vga_desde_ms = 0;
+        if (!$value$plusargs("VGATRAMAS=%d", vga_tramas)) vga_tramas = 3;
+    end
+    wire signed [5:0] tb_hoff = tb_sd_off ? -6'sd20 : 6'sd0;   // los del top con H centre 0
+
     // SDRAM
     wire [12:0] SDRAM_A;
     wire [15:0] SDRAM_DQ;
@@ -54,7 +67,9 @@ module tb_fp1100;
     wire        fdc_motor;
 
     fp1100 dut (
-        .clk_sys(clk), .clk_pix(clk_pix), .h_off(6'sd0), .v_off(5'sd0), .reset(reset), .sdram_antes(captura_antes), .vga400(vga400_tb), .vid_31k(), .mem_reset(mem_reset),
+        .clk_sys(clk), .clk_pix(clk_pix), .clk_vga(clk_pix), .vga525(1'b0), .vga_scanlines(2'b00),
+        .vga_r(), .vga_g(), .vga_b(), .vga_hs(), .vga_vs(), .vga_hb(), .vga_vb(),
+        .h_off(tb_hoff), .v_off(5'sd0), .vid_15k(tb_sd_off), .reset(reset), .sdram_antes(captura_antes), .vga400(vga400_tb), .vid_31k(), .mem_reset(mem_reset),
         .dip(dip_tb), .vid_libre(1'b0),
         .dl_addr(dl_addr), .dl_data(dl_data), .dl_wr(dl_wr), .sdram_free(sdram_free),
         .rom1_wr(rom1_wr), .rom2_wr(rom2_wr), .cg_wr(cg_wr), .rom_wr_addr(rom_wr_addr),
@@ -261,6 +276,47 @@ module tb_fp1100;
         if (~hb & ~vb) begin
             if (px < 640 && ln < 400) trama[ln][px] <= {G[7], R[7], B[7]};
             px <= px + 1;
+        end
+    end
+
+    //------------------------------------------------------------------
+    // mist_video y volcado VGA (+VGAHEX), igual que en tb_sd
+    //------------------------------------------------------------------
+    wire [5:0] VGA_R, VGA_G, VGA_B;
+    wire VGA_HS, VGA_VS, VGA_HB, VGA_VB, VGA_DE;
+    mist_video #(.COLOR_DEPTH(8), .SD_HCNT_WIDTH(11), .USE_BLANKS(1'b1), .OSD_COLOR(3'b001),
+                 .OUT_COLOR_DEPTH(6), .BIG_OSD(1'b0)) mv (
+        .clk_sys(clk_pix), .SPI_SCK(1'b0), .SPI_SS3(1'b1), .SPI_DI(1'b0),
+        .scanlines(2'b00), .ce_divider(3'd1),
+        .scandoubler_disable(tb_sd_off), .no_csync(1'b1), .ypbpr(1'b0),
+        .rotate(2'b00), .blend(1'b0),
+        .R(R), .G(G), .B(B), .HBlank(hb), .VBlank(vb),
+        .HSync(~hs), .VSync(~vs), .osd_enable(),
+        .VGA_R(VGA_R), .VGA_G(VGA_G), .VGA_B(VGA_B),
+        .VGA_VS(VGA_VS), .VGA_HS(VGA_HS), .VGA_HB(VGA_HB), .VGA_VB(VGA_VB), .VGA_DE(VGA_DE)
+    );
+    function automatic [7:0] digito(input [4:0] v);
+        digito = (v < 10) ? 8'd48 + {3'd0, v} : 8'd87 + {3'd0, v};
+    endfunction
+    integer vfo = 0, vnvs = 0, vnvs0 = -1;
+    reg vvhs_d = 1, vvvs_d = 1;
+    bit vvolcando = 0;
+    always @(posedge clk_pix) if (vgahex) begin
+        vvhs_d <= VGA_HS; vvvs_d <= VGA_VS;
+        if (vvvs_d & ~VGA_VS) begin
+            vnvs = vnvs + 1;
+            if (vnvs0 < 0 && $time >= longint'(vga_desde_ms) * 1000000) begin
+                vnvs0 = vnvs; vfo = $fopen("vga.hex", "w"); vvolcando = 1;
+                $display("%0t VGA: volcando %0d tramas a vga.hex", $time, vga_tramas);
+            end
+            if (vvolcando) begin
+                if (vnvs > vnvs0 + vga_tramas) begin vvolcando = 0; $fclose(vfo); $display("%0t VGA: vga.hex hecho", $time); end
+                else $fwrite(vfo, "#trama\n");
+            end
+        end
+        if (vvolcando) begin
+            if (vvhs_d & ~VGA_HS) $fwrite(vfo, "\n%s", VGA_VS ? "-" : "S");
+            $fwrite(vfo, "%c", digito({~VGA_HS, VGA_DE, VGA_G[5], VGA_R[5], VGA_B[5]}));
         end
     end
 

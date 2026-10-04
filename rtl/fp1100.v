@@ -29,8 +29,12 @@ module fp1100 #(
 ) (
     input  wire        clk_sys,
     input  wire        clk_pix,         // 25 MHz: la salida de video
+    input  wire        clk_vga,         // 25,1436 MHz: la salida de 31 kHz propia (VGA_525)
+    input  wire        vga525,          // 31 kHz por fp1100_vga: fp1100_display solo hace 15 kHz
+    input  wire [1:0]  vga_scanlines,   // scanlines de fp1100_vga
     input  wire signed [5:0] h_off,     // centrado horizontal (puntos, -16..+12)
     input  wire signed [4:0] v_off,     // centrado vertical (lineas)
+    input  wire        vid_15k,         // salida a 15 kHz (sin scandoubler): sincronismos de TV
     input  wire        reset,
     input  wire        sdram_antes,     // recoger el dato de la SDRAM un paso antes (SiDi)
     input  wire        vga400,          // Screen 1 en 400 lineas a 31 kHz (OSD)
@@ -73,6 +77,15 @@ module fp1100 #(
     output wire        vid_vs,
     output wire        vid_hb,
     output wire        vid_vb,
+
+    // video de 31 kHz propio (fp1100_vga, en clk_vga, un punto por ciclo)
+    output wire [7:0]  vga_r,
+    output wire [7:0]  vga_g,
+    output wire [7:0]  vga_b,
+    output wire        vga_hs,
+    output wire        vga_vs,
+    output wire        vga_hb,
+    output wire        vga_vb,
 
     // teclado
     input  wire [10:0] ps2_key,
@@ -291,6 +304,7 @@ module fp1100 #(
     wire [13:0] lin_ma, lin_cursor;
     wire [4:0]  lin_ra;
     wire [7:0]  lin_chars;
+    wire [8:0]  lin_n;
 
     fp1100_video crtc (
         .clk(clk_sys), .reset(reset), .ce_dot(ce_dot),
@@ -298,7 +312,7 @@ module fp1100 #(
         .crtc_din(crtc_din), .crtc_dout(crtc_dout),
         .pa(pa),
         .hsync(hsync), .vblank(),
-        .linea_tgl(linea_tgl), .lin_ma(lin_ma), .lin_ra(lin_ra),
+        .linea_tgl(linea_tgl), .lin_ma(lin_ma), .lin_ra(lin_ra), .lin_n(lin_n),
         .lin_visible(lin_visible), .lin_vsync(lin_vsync), .lin_chars(lin_chars),
         .lin_col40(lin_col40), .lin_display_on(lin_display_on), .lin_screen1(lin_screen1),
         .lin_cursor(lin_cursor), .lin_cursor_on(lin_cursor_on)
@@ -311,6 +325,8 @@ module fp1100 #(
     wire [31:0] sd_v_dout;
     wire [7:0]  lb_addr;
     wire [23:0] lb_q;
+    wire [9:0]  lb31_addr;
+    wire [23:0] lb31_q;
 `ifdef VRAM_SDRAM
     assign vf_ack = sd_v_ack;
     assign vf_q   = sd_v_dout;
@@ -321,17 +337,18 @@ module fp1100 #(
 
     fp1100_vfetch vfetch (
         .clk(clk_sys), .reset(reset),
-        .linea_tgl(linea_tgl), .lin_ma(lin_ma), .lin_ra(lin_ra),
+        .linea_tgl(linea_tgl), .lin_ma(lin_ma), .lin_ra(lin_ra), .lin_n(lin_n),
         .lin_visible(lin_visible), .lin_display_on(lin_display_on), .lin_chars(lin_chars),
         .lin_screen1(lin_screen1), .vga400(vga400),
         .rd(vf_rd), .par(vf_par), .addr(vf_addr), .ack(vf_ack), .q(vf_q),
-        .clk_pix(clk_pix), .lb_addr(lb_addr), .lb_q(lb_q)
+        .clk_pix(clk_pix), .lb_addr(lb_addr), .lb_q(lb_q),
+        .clk_vga(clk_vga), .lb31_addr(lb31_addr), .lb31_q(lb31_q)
     );
 
     fp1100_display display (
         .clk_pix(clk_pix), .reset(reset), .ce_pix(ce_pix),
-        .vga400(vga400), .modo31(vid_31k),
-        .h_off(h_off), .v_off(v_off),
+        .vga400(vga400 & ~vga525), .modo31(vid_31k),
+        .h_off(h_off), .v_off(v_off), .tv15(vid_15k | vga525),
         .linea_tgl(linea_tgl), .lin_ma(lin_ma), .lin_ra(lin_ra),
         .lin_visible(lin_visible), .lin_vsync(lin_vsync), .lin_chars(lin_chars),
         .lin_col40(lin_col40), .lin_display_on(lin_display_on), .lin_screen1(lin_screen1),
@@ -342,6 +359,20 @@ module fp1100 #(
         .R(vid_r), .G(vid_g), .B(vid_b),
         .hsync(vid_hs), .hsync_cs(vid_hs_cs), .vsync(vid_vs),
         .hblank(vid_hb), .vblank(vid_vb)
+    );
+
+    // 31 kHz propio: VGA 640x480 de 525 lineas (macro VGA_525 del top)
+    fp1100_vga vga (
+        .clk(clk_vga), .reset(reset),
+        .h_off(h_off), .v_off(v_off), .vga400(vga400), .scanlines(vga_scanlines),
+        .linea_tgl(linea_tgl), .lin_n(lin_n), .lin_ma(lin_ma), .lin_ra(lin_ra),
+        .lin_visible(lin_visible), .lin_chars(lin_chars), .lin_col40(lin_col40),
+        .lin_display_on(lin_display_on), .lin_screen1(lin_screen1),
+        .lin_cursor(lin_cursor), .lin_cursor_on(lin_cursor_on),
+        .pa(pa), .color_reg(color_reg),
+        .lb_addr(lb31_addr), .lb_q(lb31_q),
+        .R(vga_r), .G(vga_g), .B(vga_b),
+        .hsync(vga_hs), .vsync(vga_vs), .hblank(vga_hb), .vblank(vga_vb)
     );
 
     //------------------------------------------------------------------

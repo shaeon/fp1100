@@ -35,6 +35,15 @@
 `ifdef POSEIDON
 `define UN_SOLO_LED
 `endif
+// La SDRAM de la Calypso tiene un bit de direccion menos (A0-A11): no hay
+// pin de A12. El controlador nunca pone A12 a 1 (filas de 12 bits), asi que
+// alli el puerto es de 12 bits; antes Quartus sacaba A12 por un pin
+// cualquiera (Critical Warning 169085).
+`ifndef RELOJ_27
+`ifndef POSEIDON
+`define SDRAM_SIN_A12
+`endif
+`endif
 
 module fp1100_top(
 `ifdef RELOJ_27
@@ -81,7 +90,11 @@ module fp1100_top(
     input         AUDIO_IN,
 `endif
 
+`ifdef SDRAM_SIN_A12
+    output [11:0] SDRAM_A,
+`else
     output [12:0] SDRAM_A,
+`endif
     inout  [15:0] SDRAM_DQ,
     output        SDRAM_DQML,
     output        SDRAM_DQMH,
@@ -165,7 +178,7 @@ parameter CONF_STR = {
 };
 
 /////////////////  RELOJES  ///////////////////////
-wire clk_sys, clk_sdram, clk_pix, clk_32v;
+wire clk_sys, clk_sdram, clk_pix, clk_c3, clk_vga;
 wire pll_locked;
 
 pll pll(
@@ -173,9 +186,26 @@ pll pll(
     .c0(clk_sdram),     // sin usar
     .c1(clk_sys),       // 32 MHz
     .c2(clk_pix),       // 25 MHz: video, exactamente clk_sys x 25/32
-    .c3(clk_32v),       // sin usar
+    .c3(clk_c3),        // con VGA_525, copia del cristal para pll_vga; si no, sin usar
     .locked(pll_locked)
 );
+
+// VGA_525 (las tres placas): la salida de 31 kHz es un 640x480 de
+// 525 lineas hecho por fp1100_vga con su propio reloj, 25,1436 MHz (ver
+// pll_vga.v), en vez del scandoubler, que solo puede dar 522 (261 x 2).
+`ifdef VGA_525
+localparam bit VGA525 = 1;
+// pll_vga toma el cristal de c3 y no del pin: el pin de reloj es el del
+// PLL principal, y llevarlo a otro PLL da un Critical Warning (176598).
+pll_vga pll_vga(
+    .inclk0(clk_c3),
+    .c0(clk_vga),       // 25,1436 MHz
+    .locked()
+);
+`else
+localparam bit VGA525 = 0;
+assign clk_vga = clk_pix;
+`endif
 
 `ifdef MIST
 localparam FAMILIA = "Cyclone III";
@@ -369,6 +399,8 @@ wire        dbg_sdram_ready, dbg_int_req, dbg_int_ack;
 wire        ce_pix;
 wire        vid_31k;         // Screen 1 a 400 lineas: 31 kHz del core
 wire [7:0]  R, G, B;
+wire [7:0]  vga_r, vga_g, vga_b;
+wire        vga_hs, vga_vs, vga_hb, vga_vb;
 wire        hs, hs_cs, vs, hblank, vblank;
 wire        beeper, cmt_motor, cmt_mic, fdc_motor, tape_lista, tape_play, cmt_rec, ear_mon;
 wire        led_shift, led_caps;
@@ -377,28 +409,27 @@ wire        led_shift, led_caps;
 // impresora FP-1012PR, b5 siempre a uno
 wire [7:0] dip = {2'b11, 1'b1, 1'b1, status[9], ~status[8], status[7], ~status[6]};
 
-// Centrado horizontal (probado en la placa, con el core de la §34 como
-// referencia: a 15 kHz quedaba bien con H centre -16 y a 31 kHz con -8, que
-// alli eran 48 - 16 = 32 y 48 + 8 - 8 = 48 puntos de porche trasero).
-// Por defecto, con H centre a 0:
-//   15 kHz: imagen en el punto 32 (h_off -16)
+// Centrado horizontal. Por defecto, con H centre a 0:
+//   15 kHz: imagen en el punto 28 tras la hsync (h_off -20): empieza a
+//           10,0 us del flanco de la hsync y su centro cae a 35,6 us, el de
+//           la imagen activa de la television (con -16, el de antes, iba
+//           ~0,3 us a la derecha: se veia escorada).
 //   31 kHz: imagen en el punto 48 (h_off 0, el porche de VGA)
-// El menu (-16..+12) suma encima: 16..44 a 15 kHz, 32..60 a 31 kHz; por la
-// derecha la imagen acaba como mucho a 2 puntos de la hsync (704).
+// El menu (-16..+12) suma encima: 12..40 a 15 kHz (h_off no baja de -32:
+// -16 en el menu da lo mismo que -12), 32..60 a 31 kHz; por la derecha la
+// imagen acaba como mucho a 2 puntos de la hsync (704).
 wire signed [5:0] h_off_menu = {status[16], status[16:14], 2'b00};
-wire signed [5:0] h_off = scandoubler_disable ? (h_off_menu - 6'sd16) : h_off_menu;
+wire signed [6:0] h_off_15k  = {h_off_menu[5], h_off_menu} - 7'sd20;
+wire signed [5:0] h_off = ~scandoubler_disable ? h_off_menu :
+                          (h_off_15k < -7'sd32) ? 6'b100000 : h_off_15k[5:0];   // -32
 
-// Centrado vertical. A 31 kHz (scandoubler, o el modo de 400 lineas) la
-// imagen baja 4 lineas de la maquina (8 de salida) por defecto: el OSSC y los
-// monitores colocan las 480 lineas de VGA a ~35 del principio de la vsync, y
-// nuestras 400 empezaban a 56, pero el OSSC se comia la fila de arriba;
-// probado en la placa, V centre +4 la deja entera. A 15 kHz, como antes. El
-// menu sigue sumando (-8..+6); por arriba se queda en +8, lo que admite la
-// vsync (fp1100_display).
+// Centrado vertical (menu -8..+6 lineas de la maquina). A 31 kHz
+// (scandoubler, o el modo de 400 lineas) fp1100_display saca la vsync de VGA
+// (2 lineas de salida) con la imagen centrada en las 480 lineas; antes iba
+// la vsync de 16 lineas del CRTC, doblada a 32, y el OSSC, que cuenta el
+// porche desde el final de la vsync, se comia la fila de arriba.
 wire signed [5:0] v_off_menu = {status[19], status[19:17], 1'b0};
-wire signed [5:0] v_off_31k  = v_off_menu + 6'sd4;
-wire signed [4:0] v_off = scandoubler_disable ? v_off_menu[4:0] :
-                          (v_off_31k > 6'sd8) ? 5'sd8 : v_off_31k[4:0];
+wire signed [4:0] v_off = v_off_menu[4:0];
 
 localparam CLK_HZ = 32_000_000;
 
@@ -422,14 +453,25 @@ wire sdram_antes = 1'b1;
 wire sdram_antes = 1'b0;
 `endif
 
+wire [12:0] sdram_a;
+`ifdef SDRAM_SIN_A12
+assign SDRAM_A = sdram_a[11:0];
+`else
+assign SDRAM_A = sdram_a;
+`endif
+
 fp1100 #(.CLK_HZ(CLK_HZ)) fp1100(
     .clk_sys(clk_sys),
     .clk_pix(clk_pix),
+    .clk_vga(clk_vga),
+    .vga525(VGA525),
+    .vga_scanlines(status[5:4]),
     // Centrado: en complemento a dos dentro de tres bits (las cuatro
     // primeras posiciones del menu positivas, las cuatro ultimas negativas),
     // x4 puntos en horizontal y x2 lineas en vertical
     .h_off(h_off),
     .v_off(v_off),
+    .vid_15k(scandoubler_disable),
     .reset(reset),
     .sdram_antes(sdram_antes),
     // Screen 1 (400 lineas entrelazadas): "Fields" = cada trama por el
@@ -452,7 +494,7 @@ fp1100 #(.CLK_HZ(CLK_HZ)) fp1100(
     .rom2_wr(rom_dl & ioctl_wr & in_sub2),
     .cg_wr(rom_dl & ioctl_wr & in_sub3),
     .rom_wr_addr(ioctl_addr[11:0]),
-    .SDRAM_A(SDRAM_A), .SDRAM_DQ(SDRAM_DQ),
+    .SDRAM_A(sdram_a), .SDRAM_DQ(SDRAM_DQ),
     .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
     .SDRAM_nWE(SDRAM_nWE), .SDRAM_nCAS(SDRAM_nCAS),
     .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nCS(SDRAM_nCS),
@@ -460,6 +502,8 @@ fp1100 #(.CLK_HZ(CLK_HZ)) fp1100(
     .ce_pix(ce_pix),
     .vid_r(R), .vid_g(G), .vid_b(B),
     .vid_hs(hs), .vid_hs_cs(hs_cs), .vid_vs(vs), .vid_hb(hblank), .vid_vb(vblank),
+    .vga_r(vga_r), .vga_g(vga_g), .vga_b(vga_b),
+    .vga_hs(vga_hs), .vga_vs(vga_vs), .vga_hb(vga_hb), .vga_vb(vga_vb),
     .ps2_key(ps2_key),
     .kbd_soltar(kbd_soltar),
     .kbd_alguna(kbd_alguna),
@@ -540,6 +584,77 @@ wire [7:0] G_mix = G;
 wire [7:0] R_mix = status[10] ? G : R;
 wire [7:0] B_mix = status[10] ? G : B;
 
+`ifdef VGA_525
+// Dos mist_video, los dos sin scandoubler: el de 15 kHz con clk_pix
+// (fp1100_display) y el de 31 kHz con clk_vga (fp1100_vga, VGA de 525
+// lineas, sincronismos separados). Cada uno lleva su OSD (los dos reciben
+// el mismo SPI) y a los pines va el del modo elegido. El selector solo
+// cambia al tocar el modo de video del firmware.
+wire [7:0] vga_g_mix = vga_g;
+wire [7:0] vga_r_mix = status[10] ? vga_g : vga_r;
+wire [7:0] vga_b_mix = status[10] ? vga_g : vga_b;
+wire       usa_csync15 = ~no_csync | ypbpr;
+wire [VGA_BITS-1:0] r15, g15, b15, r31, g31, b31;
+wire       hs15, vs15, hs31, vs31, osd15, osd31;
+wire       sel31 = ~scandoubler_disable;
+
+mist_video #(
+    .COLOR_DEPTH(8),
+    .SD_HCNT_WIDTH(11),
+    .USE_BLANKS(1'b1),
+    .OSD_COLOR(3'b001),
+    .OUT_COLOR_DEPTH(VGA_BITS),
+    .BIG_OSD(BIG_OSD))
+mist_video(
+    .clk_sys(clk_pix),
+    .SPI_SCK(SPI_SCK),
+    .SPI_SS3(SPI_SS3),
+    .SPI_DI(SPI_DI),
+    .R(R_mix), .G(G_mix), .B(B_mix),
+    .HBlank(hblank), .VBlank(vblank),
+    .HSync(usa_csync15 ? ~hs_cs : ~hs), .VSync(~vs),
+    .VGA_R(r15), .VGA_G(g15), .VGA_B(b15),
+    .VGA_VS(vs15), .VGA_HS(hs15),
+    .ce_divider(3'd1),          // pixel = clk_pix / 2: 12,5 MHz
+    .scandoubler_disable(1'b1),
+    .no_csync(no_csync),
+    .scanlines(2'b00),
+    .ypbpr(ypbpr),
+    .osd_enable(osd15)
+);
+
+mist_video #(
+    .COLOR_DEPTH(8),
+    .SD_HCNT_WIDTH(11),
+    .USE_BLANKS(1'b1),
+    .OSD_COLOR(3'b001),
+    .OUT_COLOR_DEPTH(VGA_BITS),
+    .BIG_OSD(BIG_OSD))
+mist_video31(
+    .clk_sys(clk_vga),
+    .SPI_SCK(SPI_SCK),
+    .SPI_SS3(SPI_SS3),
+    .SPI_DI(SPI_DI),
+    .R(vga_r_mix), .G(vga_g_mix), .B(vga_b_mix),
+    .HBlank(vga_hb), .VBlank(vga_vb),
+    .HSync(~vga_hs), .VSync(~vga_vs),
+    .VGA_R(r31), .VGA_G(g31), .VGA_B(b31),
+    .VGA_VS(vs31), .VGA_HS(hs31),
+    .ce_divider(3'd1),
+    .scandoubler_disable(1'b1),
+    .no_csync(1'b1),
+    .scanlines(2'b00),
+    .ypbpr(ypbpr),
+    .osd_enable(osd31)
+);
+
+assign VGA_R  = sel31 ? r31 : r15;
+assign VGA_G  = sel31 ? g31 : g15;
+assign VGA_B  = sel31 ? b31 : b15;
+assign VGA_HS = sel31 ? hs31 : hs15;
+assign VGA_VS = sel31 ? vs31 : vs15;
+assign osd_enable = sel31 ? osd31 : osd15;
+`else
 // Sincronismo compuesto a 15 kHz: mist_video lo forma con ~(hs ^ vs) cuando
 // el scandoubler esta desactivado y no se piden H y V separadas (o YPbPr);
 // para ese caso va hs_cs (ver fp1100_display). Con el scandoubler, la hsync
@@ -574,6 +689,7 @@ mist_video(
     .ypbpr(ypbpr),
     .osd_enable(osd_enable)
 );
+`endif
 
 /////////////////  AUDIO  ////////////////////////
 // El beeper del teclado: onda cuadrada de ~950 Hz mientras esta activo

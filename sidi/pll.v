@@ -3,7 +3,7 @@
 //   altpll_component  c0  32 MHz desfasado -7800 ps (sin usar: SDRAM_CLK
 //                         sale de un registro DDR con c1)
 //                     c1  32 MHz: reloj del sistema
-//                     c3  32 MHz: sin usar
+//                     c3  27 MHz: copia del cristal para pll_vga (VGA_525)
 //                     VCO 864 MHz (27 x 32), /27 = 32
 //   altpll_vid        c2 (su clk[0]) 25 MHz: reloj de pixel, puntos de
 //                         12,5 MHz, 800 por linea
@@ -17,9 +17,8 @@
 // ellos es exacta: no derivan. La fase entre c1 y c2 da igual (el video
 // cruza de dominio por un toggle sincronizado).
 //
-// locked = los dos enganchados. Si Quartus avisa de que la entrada del
-// segundo PLL no llega por un pin de reloj dedicado, es normal: la toma de
-// la red global. Si se regenera con el asistente, hay que conservar los
+// locked = los dos enganchados. altpll_vid toma el cristal de c3 del
+// primero (copia 1:1), no del pin: desde el pin daba un Critical Warning. Si se regenera con el asistente, hay que conservar los
 // nombres de instancia: el .sdc los usa.
 `timescale 1 ps / 1 ps
 // synopsys translate_on
@@ -101,9 +100,9 @@ module pll (
 		altpll_component.clk1_duty_cycle = 50,
 		altpll_component.clk1_multiply_by = 32,
 		altpll_component.clk1_phase_shift = "0",
-		altpll_component.clk3_divide_by = 27,
+		altpll_component.clk3_divide_by = 1,
 		altpll_component.clk3_duty_cycle = 50,
-		altpll_component.clk3_multiply_by = 32,
+		altpll_component.clk3_multiply_by = 1,
 		altpll_component.clk3_phase_shift = "0",
 		altpll_component.compensate_clock = "CLK0",
 		altpll_component.inclk0_input_frequency = 37037,
@@ -157,8 +156,11 @@ module pll (
 		altpll_component.width_clock = 5;
 
 
+	// Entrada: los 27 MHz por c3 del PLL principal (copia del cristal), no
+	// del pin: el pin de reloj es el de altpll_component, y llevarlo a otro
+	// PLL daba el Critical Warning 176598 (remote clock pin)
 	altpll	altpll_vid (
-				.inclk ({1'b0, inclk0}),
+				.inclk ({1'b0, sub_wire0[3]}),
 				.clk (vid_clk),
 				.locked (vid_locked),
 				.activeclock (),

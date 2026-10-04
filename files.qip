@@ -12,6 +12,7 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_upd7801.sv]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_video.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_display.v]
+set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_vga.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_vfetch.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_kbd.v]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) rtl/fp1100_ps2.v]

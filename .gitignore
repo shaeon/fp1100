@@ -20,8 +20,11 @@ test/build_user_io_ps2.v
 test/build_vsync/
 test/build_vsync_w/
 test/build_sim/
+test/build_sd/
+test/vga.hex
 test/build_lint/
 test/run_*/
 test/*.ppm
 test/*.log
 *.dsk
+.DS_Store

@@ -14,7 +14,7 @@ create_generated_clock -name sdram_clk -source [get_pins {pll|altpll_component|a
 # Automatically calculate clock uncertainty to jitter and other effects.
 derive_clock_uncertainty
 
-set_clock_groups -asynchronous -group [get_clocks {SPI_SCK}] -group [get_clocks {pll|altpll_component|auto_generated|pll1|clk[*] pll|altpll_vid|auto_generated|pll1|clk[0] sdram_clk}]
+set_clock_groups -asynchronous -group [get_clocks {SPI_SCK}] -group [get_clocks {pll|altpll_component|auto_generated|pll1|clk[*] pll|altpll_vid|auto_generated|pll1|clk[0] sdram_clk pll_vga|*|clk[0]}]
 
 
 # SDRAM: los retardos van contra sdram_clk, definido arriba.
@@ -31,3 +31,15 @@ set_output_delay -clock [get_clocks {sdram_clk}] -min -0.8 [get_ports {SDRAM_D* 
 set_clock_groups -asynchronous \
     -group [get_clocks {pll|altpll_component|auto_generated|pll1|clk[1] sdram_clk}] \
     -group [get_clocks {pll|altpll_vid|auto_generated|pll1|clk[0]}]
+
+# VGA_525: fp1100_vga va con el c0 de pll_vga|b (25,1436 MHz; pll_vga|a da
+# los 41,67 MHz intermedios, que solo alimentan a pll_vga|b) y, como
+# fp1100_display, toma del CRTC un toggle sincronizado y valores que solo
+# cambian con el; el anillo de lineas de fp1100_vfetch se escribe con c1 y
+# se lee con este
+set_clock_groups -asynchronous \
+    -group [get_clocks {pll|altpll_component|auto_generated|pll1|clk[1] sdram_clk}] \
+    -group [get_clocks {pll_vga|*|clk[0]}]
+set_clock_groups -asynchronous \
+    -group [get_clocks {pll|altpll_vid|auto_generated|pll1|clk[0]}] \
+    -group [get_clocks {pll_vga|*|clk[0]}]

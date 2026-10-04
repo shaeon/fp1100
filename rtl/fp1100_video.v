@@ -42,6 +42,7 @@ module fp1100_video (
     // solo en el ultimo punto de cada linea, cuando conmuta linea_tgl.
     output reg         linea_tgl,       // cambia al empezar cada linea
     output wire [13:0] lin_ma,          // MA del primer caracter de la linea
+    output wire [8:0]  lin_n,           // numero de linea en la trama (0 = primera visible)
     output wire [4:0]  lin_ra,          // raster
     output wire        lin_visible,     // dentro de las filas de display
     output wire        lin_vsync,
@@ -129,6 +130,7 @@ module fp1100_video (
     reg        vs_on;
     reg        field;               // trama par/impar
     reg [4:0]  frames;              // para el parpadeo del cursor
+    reg [8:0]  nlin;                // linea dentro de la trama
 
     wire fin_char  = ce_dot & (dot == dot_max);
     wire fin_linea = fin_char & (hcc == r0);
@@ -166,7 +168,7 @@ module fp1100_video (
             ajuste <= 1'b0; ajuste_cnt <= 5'd0;
             ma <= 14'd0; ma_row <= 14'd0;
             hs_cnt <= 4'd0; vs_cnt <= 4'd0; vs_on <= 1'b0; field <= 1'b0;
-            frames <= 5'd0; hsync <= 1'b0;
+            frames <= 5'd0; hsync <= 1'b0; nlin <= 9'd0;
         end else if (ce_dot) begin
             // puntos y caracteres
             if (dot == dot_max) begin
@@ -196,6 +198,7 @@ module fp1100_video (
 
                 ma <= ma_linea_sig;
                 ra <= ra_linea_sig;
+                nlin <= fin_trama ? 9'd0 : nlin + 9'd1;
 
                 if (fin_trama) begin
                     vcc        <= 7'd0;
@@ -243,6 +246,7 @@ module fp1100_video (
     assign vblank         = ~visible_v;
     assign lin_ma         = ma_lin_r;
     assign lin_ra         = ra;
+    assign lin_n          = nlin;
     assign lin_visible    = visible_v;
     assign lin_vsync      = vs_on;
     assign lin_chars      = r1;

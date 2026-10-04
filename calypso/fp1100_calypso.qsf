@@ -151,7 +151,6 @@ set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_A[8]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_A[9]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_A[10]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_A[11]
-set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_A[12]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_BA[0]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_BA[1]
 set_instance_assignment -name FAST_OUTPUT_REGISTER ON -to SDRAM_DQMH
@@ -283,11 +282,16 @@ set_global_assignment -name VERILOG_MACRO "VRAM_SDRAM=1"
 set_global_assignment -name VERILOG_MACRO "SDRAM_ANTES=1"
 # Reloj PS/2 interno a ~16 kHz (PS2DIV 1000) en vez de ~158 kHz. Ver el top.
 set_global_assignment -name VERILOG_MACRO "PS2_16KHZ=1"
+# VGA_525: a 31 kHz el video sale de fp1100_vga (640x480 de 800 x 525 a
+# 25,1436 MHz, el VGA estandar) en vez del scandoubler (522 lineas). Necesita
+# pll_vga.v (dos PLL en cascada desde los 24 MHz que salen por c3 de pll.v).
+set_global_assignment -name VERILOG_MACRO "VGA_525=1"
 
 set_global_assignment -name PRE_FLOW_SCRIPT_FILE "quartus_sh:build_id.tcl"
 set_global_assignment -name QIP_FILE ../files.qip
 # Propio de la Calypso: PLL de 12 MHz y restricciones de tiempo
 set_global_assignment -name QIP_FILE pll.qip
+set_global_assignment -name VERILOG_FILE pll_vga.v
 set_global_assignment -name SDC_FILE fp1100_calypso.sdc
 
 

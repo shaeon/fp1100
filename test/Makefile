@@ -13,10 +13,16 @@
 RTL := ../rtl
 MM  := ../common/mist-modules
 SRC := $(RTL)/fp1100.v $(RTL)/fp1100_main.v $(RTL)/fp1100_sub.v \
-       $(RTL)/fp1100_upd7801.sv $(RTL)/upd7800/upd7800.sv $(RTL)/fp1100_video.v $(RTL)/fp1100_display.v $(RTL)/fp1100_vfetch.v \
+       $(RTL)/fp1100_upd7801.sv $(RTL)/upd7800/upd7800.sv $(RTL)/fp1100_video.v $(RTL)/fp1100_display.v $(RTL)/fp1100_vga.v $(RTL)/fp1100_vfetch.v \
        $(RTL)/fp1100_kbd.v $(RTL)/fp1100_dpram.v $(RTL)/fp1100_sdram.v \
        $(RTL)/fp1100_fdc.v $(RTL)/u765/u765.sv $(RTL)/fp1100_cmt.v $(RTL)/fp1100_tape.v
-SIM := tb_fp1100.sv sdram_model.v t80pa_tv80.v tv80_core.v tv80_alu.v tv80_mcode.v tv80_reg.v
+SIM := tb_fp1100.sv sdram_model.v t80pa_tv80.v tv80_core.v tv80_alu.v tv80_mcode.v tv80_reg.v \
+       $(MM)/mist_video.v osd_sim.v $(MM)/cofi.sv $(MM)/video_cleaner.v $(MM)/rgb2ypbpr.v \
+       $(MM)/scandoubler/scandoubler.v $(MM)/scandoubler/scandoubler_framing.v \
+       $(MM)/scandoubler/scandoubler_linedouble.v $(MM)/scandoubler/scandoubler_rotate.v \
+       $(MM)/scandoubler/frac_interp.v $(MM)/scandoubler/pixel_interp.v \
+       $(MM)/scandoubler/scandoubler_rgb_interp.v $(MM)/scandoubler/unsigned_division.v \
+       scandoubler_scaledepth_sim.v
 # make sim DEFS=+define+VRAM_SDRAM   la VRAM en la SDRAM, como en la SiDi
 # (hace falta make clean al cambiar DEFS)
 DEFS ?=
@@ -60,6 +66,29 @@ wav: build_sim/sim
 	@build_sim/sim +CICLOS=40000000 +TECLEAR=5 +WAV=$(WAV) | grep -a -E "CINTA|volcada|fin:"
 
 clean:
-	@rm -rf build_sim build_lint run_* *.vvp *.ppm *.png *.log vacio.dsk hola.wav
+	@rm -rf build_sim build_lint build_sd run_* *.vvp *.ppm *.png *.log vacio.dsk hola.wav
 
-.PHONY: lint sim teclas wav clean
+# Camino de video sin la maquina (no hace falta ROM): CRTC + vfetch + display
+# + mist_video con una VRAM de prueba; mide los sincronismos y comprueba que
+# salgan todas las lineas. Deja run_sd31/ y run_sd15/ con vga.png y
+# vga_completa.png (hace falta /usr/bin/python3 con PIL para las imagenes).
+SD_SRC := tb_sd.sv $(RTL)/fp1100_video.v $(RTL)/fp1100_vfetch.v $(RTL)/fp1100_display.v $(RTL)/fp1100_vga.v \
+          $(MM)/mist_video.v osd_sim.v $(MM)/cofi.sv $(MM)/video_cleaner.v $(MM)/rgb2ypbpr.v \
+          $(MM)/scandoubler/scandoubler.v $(MM)/scandoubler/scandoubler_framing.v \
+          $(MM)/scandoubler/scandoubler_linedouble.v $(MM)/scandoubler/scandoubler_rotate.v \
+          $(MM)/scandoubler/frac_interp.v $(MM)/scandoubler/pixel_interp.v \
+          $(MM)/scandoubler/scandoubler_rgb_interp.v $(MM)/scandoubler/unsigned_division.v \
+          scandoubler_scaledepth_sim.v
+PY_PIL := $(shell /usr/bin/python3 -c "import PIL" 2>/dev/null && echo /usr/bin/python3 || echo python3)
+
+build_sd/sim: $(SD_SRC)
+	@$(VL) --top-module tb_sd -Mdir build_sd -o sim $(SD_SRC) 2>&1 | grep "%Error" ; true
+
+sd: build_sd/sim
+	@mkdir -p run_sd31 run_sd15
+	@cd run_sd31 && ../build_sd/sim $(SDARGS) | grep modo
+	@$(PY_PIL) analiza_sd.py run_sd31/vga.hex run_sd31/vga.png | sed -n '/trama 2/,$$p'
+	@cd run_sd15 && ../build_sd/sim +SD_OFF $(SDARGS) | grep modo
+	@$(PY_PIL) analiza_sd.py run_sd15/vga.hex run_sd15/vga.png | sed -n '/trama 2/,$$p'
+
+.PHONY: lint sim teclas wav sd clean

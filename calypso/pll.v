@@ -4,9 +4,11 @@
 //
 //   altpll_component  c0  32 MHz desfasado -7800 ps (sin usar)
 //                     c1  32 MHz: reloj del sistema (12 x 8/3)
-//                     c3  32 MHz: sin usar
-//   altpll_vid        c2 (su clk[0]) 25 MHz: reloj de pixel (12 x 25/12,
-//                         VCO 600 MHz, /24)
+//                     c3  24 MHz (cristal x 2): entrada de altpll_vid y de pll_vga
+//   altpll_vid        c2 (su clk[0]) 25 MHz: reloj de pixel (24 x 25/24 desde
+//                         c3, VCO 600 MHz, /24). Desde el pin de 12 MHz
+//                         daba dos Critical Warnings: entrada remota (176598)
+//                         y 12 MHz en el borde del rango de enganche (15556)
 //
 // Por que dos: el video necesita que c2/c1 sea EXACTAMENTE 25/32 (ver
 // fp1100_top.sv). En un solo PLL las dos salidas salen del mismo VCO, que
@@ -93,9 +95,9 @@ module pll (
 		altpll_component.clk1_duty_cycle = 50,
 		altpll_component.clk1_multiply_by = 8,
 		altpll_component.clk1_phase_shift = "0",
-		altpll_component.clk3_divide_by = 3,
+		altpll_component.clk3_divide_by = 1,
 		altpll_component.clk3_duty_cycle = 50,
-		altpll_component.clk3_multiply_by = 8,
+		altpll_component.clk3_multiply_by = 2,
 		altpll_component.clk3_phase_shift = "0",
 		altpll_component.compensate_clock = "CLK0",
 		altpll_component.inclk0_input_frequency = 83333,
@@ -150,7 +152,7 @@ module pll (
 
 
 	altpll	altpll_vid (
-				.inclk ({1'b0, inclk0}),
+				.inclk ({1'b0, sub_wire0[3]}),
 				.clk (vid_clk),
 				.locked (vid_locked),
 				.activeclock (),
@@ -189,12 +191,12 @@ module pll (
 				.vcounderrange ());
 	defparam
 		altpll_vid.bandwidth_type = "AUTO",
-		altpll_vid.clk0_divide_by = 12,
+		altpll_vid.clk0_divide_by = 24,
 		altpll_vid.clk0_duty_cycle = 50,
 		altpll_vid.clk0_multiply_by = 25,
 		altpll_vid.clk0_phase_shift = "0",
 		altpll_vid.compensate_clock = "CLK0",
-		altpll_vid.inclk0_input_frequency = 83333,
+		altpll_vid.inclk0_input_frequency = 41667,
 		altpll_vid.intended_device_family = "Cyclone 10 LP",
 		altpll_vid.lpm_hint = "CBX_MODULE_PREFIX=pll_vid",
 		altpll_vid.lpm_type = "altpll",

@@ -1055,3 +1055,94 @@ evento cada ~1 ms) se descartaron 41 de 200 paquetes, cosa que a ~158 kHz
 no pasaba. Tecleando de verdad (unas pocas decenas de bytes por segundo,
 como mucho 18 de golpe) no se llena. Si con la macro se pegan más teclas,
 quitarla.
+
+## 41. Sincronismos estándar a 15 y 31 kHz; VGA de 525 líneas (03/10/2026)
+
+Un usuario con OSSC y capturadora veía la imagen de 31 kHz recortada por
+abajo (la capturadora decía "522p") y la de 15 kHz algo escorada a la
+derecha. Banco nuevo para medirlo sin ROM: `make sd` (`test/tb_sd.sv` +
+`test/analiza_sd.py`): CRTC programado como la ROM del sub (R3 = 3Ah: vsync
+de 3 líneas), VRAM con una carta de ajuste que lleva el número de cada línea
+codificado, y la salida de `mist_video` volcada por ciclo. El analizador da
+líneas por cuadro, duración de hsync y vsync, dónde cae la imagen respecto a
+ellas (en µs y líneas, comparado con TV y VGA), si salen todas las líneas de
+la máquina y las columnas x = 0 y 639, y dos PNG (zona activa y cuadro
+entero con sincronismos). `+SD_OFF` 15 kHz, `+SCANDOUBLER` el 31 kHz de
+antes, `+SCREEN1` Screen 1 a 400 líneas, `+HOFF`/`+VOFF`. En `tb_fp1100`,
+`+VGAHEX` vuelca igual la máquina entera.
+
+**15 kHz** (todas las placas): hsync de 59 puntos (4,72 µs, la de TV; antes
+96, la de VGA) y la imagen 4 puntos más a la izquierda por defecto (`h_off`
+−20): empieza a 10,0 µs del flanco de la hsync y su centro cae a 35,6 µs,
+el de la TV. El OSSC la ve como 261p, 15,62 kHz, 59,86 Hz.
+
+**31 kHz con el scandoubler** (ya no lo usa ninguna placa, ver abajo): la vsync pasa a
+ser de 2 líneas (una de la máquina), con la imagen centrada en las 480 de
+VGA (40 líneas encima y debajo); antes era la del CRTC doblada (6 líneas).
+`V centre` ya no suma +4 a 31 kHz. Pero el scandoubler solo puede dar
+261 × 2 = **522 líneas**, no las 525 de VGA: el OSSC la ve como 522p y
+algunas capturadoras la recortan. 261 líneas es la máquina (cristal de
+15,9744 MHz, R0 = 127, R4 = 31, R5 = 5, R9 = 7 que programa la ROM del sub;
+igual en Takeda y MAME): no es un error de reloj del core.
+
+**31 kHz propio, macro `VGA_525`** (las tres placas): `fp1100_vga` genera un
+640x480 estándar, 800 × 525 puntos a **25,14368 MHz**: 31,43 kHz y 59,866
+Hz, dentro de la tolerancia de VESA (25,175 MHz ±0,5 %). El reloj está
+elegido para que 525 líneas de 800 duren exactamente un cuadro de la
+máquina (25,14368 = 16 × 420000/267264), así que el cuadro de VGA va
+enganchado al del CRTC: se alinea con el principio de la trama una vez y no
+se mueve (simulado: la trama del CRTC llega siempre en la línea 68, punto
+799). Las líneas no salen del barrido del CRTC: `fp1100_vfetch` escribe
+cada línea además en un anillo de 8 (`lb31`, leído con el reloj de VGA) y
+la línea de salida k de la imagen pinta la k/2 de la máquina; como 525
+líneas de salida duran lo que 261 de la máquina, la salida se adelanta
+1,15 líneas en toda la imagen, por eso empieza 6 líneas de salida después
+de la trama del CRTC. Screen 1 a 400 líneas sale igual (cada línea del
+anillo trae la raster par y la impar), sustituyendo al `modo31` de §26 en
+esta placa. Las scanlines las pone ahora `fp1100_vga` (la segunda línea de
+cada par). En el top hay dos `mist_video`, los dos sin scandoubler: el de
+15 kHz con `clk_pix` y el de 31 kHz con `clk_vga`, cada uno con su OSD, y
+a los pines va el del modo elegido.
+
+Reloj en Poseidon (`poseidon/pll_vga.v`): 175/348 de 50 MHz no sale de un
+PLL (haría falta N = 12, comparador a 4,2 MHz). Con 175/192 desde un
+intermedio Quartus **aproximó** (M = 31, C = 34: 25,16 MHz, y el vídeo se
+habría realineado en cada cuadro): hay que mirar siempre la tabla "PLL
+Usage" del fitter. Quedan dos PLL en cascada con M pequeños: 50 × 25/12 =
+104,1667 MHz y × 7/29 = 25,14368 MHz. Los 50 MHz salen de c3 del PLL
+principal (800/16): tomarlos del pin daba el Critical Warning 176598.
+Simulado en `make sd`: 525 × 800 en todos los cuadros, vsync de 2 líneas,
+480 activas desde la 35, la imagen en la 75-474, las 200 líneas dobladas
+(400 rasters en Screen 1, en orden) y x = 0 y 639; `V centre` −8..+6 y
+`H centre` −16..+12 bien. Síntesis: sin Critical Warnings, tiempos bien.
+Probado en la placa (Poseidon): bien.
+
+**SiDi y Calypso** (mismo RTL, solo cambian los PLL). Respecto al cristal la
+relación es 4375/4698 (27 MHz) y 4375/2088 (12 MHz): sin el factor 5 de los
+50 MHz, el producto de las M de la cascada tiene que ser múltiplo de 4375 y
+una sale de 125. Las dos van por un intermedio de 41,667 MHz:
+
+| Placa | Entrada (c3 de `pll`) | `pll_vga` a | `pll_vga` b |
+|---|---|---|---|
+| SiDi | 27 MHz (copia del cristal) | × 125/81: M 125, N 3, VCO 1125 | × 35/58: M 35, N 2, VCO 729 |
+| Calypso | 24 MHz (cristal × 2) | × 125/72: M 125, N 3, VCO 1000 | igual |
+
+Quartus dio en las dos la relación pedida (columnas Mult/Div de "PLL
+Usage"; la frecuencia la redondea a "25.15 MHz" porque parte de 41,67).
+Con `pll_vga` las dos placas usan los 4 PLL que tienen.
+
+De paso, fuera los Critical Warnings que ya tenían:
+- SiDi: `altpll_vid` (25 MHz) tomaba el cristal del pin, que es el del PLL
+  principal (176598). Ahora lo toma de c3.
+- Calypso: lo mismo, y además los 12 MHz del cristal quedaban en el borde
+  del rango de enganche de `altpll_vid` (15556, "12,0 a 26,01 MHz"). c3 da
+  ahora 24 MHz (VCO 480 / 20) y de ahí salen `altpll_vid` (× 25/24, VCO
+  600) y `pll_vga`.
+- Calypso: `SDRAM_A[12]` sin pin (169085): Quartus lo sacaba por un pin
+  cualquiera. **La SDRAM de la Calypso tiene un bit de dirección menos**
+  (A0-A11); el controlador nunca pone A12 a 1 (filas de 12 bits), así que el
+  top la declara de 12 bits en esa placa (`SDRAM_SIN_A12`).
+
+Síntesis (Quartus 21.1): las tres sin Critical Warnings y con tiempos bien.
+SiDi 66 % de la lógica, Calypso 55 %, 42 % de la memoria las dos (sin el
+búfer de línea del scandoubler, menos que antes).
