@@ -1,8 +1,8 @@
 # ROMs del FP-1100
 
-No se incluyen en el repositorio publico: son de Casio. Hay que poner en la
-raiz de la SD un fichero `FP1100.ROM` de 49152 bytes (48K) que es la
-concatenacion, en este orden, del set de MAME `fp1100`:
+Esta en `sd/FP1100.ROM`: hay que copiarla a la raiz de la SD. Es un fichero
+de 49152 bytes (48K) que es la concatenacion, en este orden, del set de MAME
+`fp1100`:
 
 | Offset | Tamaño | Fichero    | SHA1 (MAME)                              | Destino en el core          |
 |-------:|-------:|------------|------------------------------------------|-----------------------------|
@@ -11,6 +11,8 @@ concatenacion, en este orden, del set de MAME `fp1100`:
 | 0xA000 |  4096  | sub2.rom   | 0188d5a7b859075cb156ee55318611bd004128d7 | ROM del sub en 1000-1FFF    |
 | 0xB000 |  3968  | sub3.rom   | a9ae6b03e06ea2f5db30dfd51ebf5aede01d9672 | generador de caracteres     |
 | 0xBF80 |   128  | ceros      |                                          | (relleno hasta 48K)         |
+
+Para volver a generarla desde el set de MAME:
 
     cat basic.rom sub1.rom sub2.rom sub3.rom > FP1100.ROM
     head -c 128 /dev/zero >> FP1100.ROM

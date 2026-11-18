@@ -30,8 +30,9 @@ boots C82-BASIC and CP/M from EDSK disk images.
   Teledisk, ImageDisk and raw dumps to EDSK), a uPD7801 disassembler and a
   monitor test card on a self-booting disk.
 
-**ROMs are not included.** They are copyright of Casio and have to be
-supplied by the user; see `roms/README.md` for the expected `FP1100.ROM`.
+**ROM**: copy `sd/FP1100.ROM` (48K) to the root of the SD card; the board
+firmware loads it when the core starts. `roms/README.md` explains how it is
+built from the MAME `fp1100` set.
 
 ## How it works
 

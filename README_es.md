@@ -31,8 +31,9 @@ máquina y arranca el C82-BASIC y CP/M desde imágenes de disco EDSK.
   desensamblador de uPD7801 y una carta de ajuste en un disco que arranca
   solo.
 
-**Las ROMs no se incluyen.** Son de Casio y las tiene que aportar el
-usuario; el `FP1100.ROM` que se espera está descrito en `roms/README.md`.
+**ROM**: copia `sd/FP1100.ROM` (48K) a la raíz de la SD; el firmware de la
+placa la carga al arrancar el core. En `roms/README.md` está cómo se forma a
+partir del set de MAME `fp1100`.
 
 ## Cómo funciona
 
